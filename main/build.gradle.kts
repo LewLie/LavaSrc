@@ -31,9 +31,6 @@ dependencies {
 
     implementation("se.michaelthelin.spotify:spotify-web-api-java:8.4.1")
     implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
-    implementation("com.zaxxer:HikariCP:5.1.0")
-    implementation("com.google.guava:guava:33.2.1-jre")
-    implementation("org.jooq:jooq:3.19.8")
 
     compileOnly("org.projectlombok:lombok:1.18.34")
     annotationProcessor("org.projectlombok:lombok:1.18.34")
