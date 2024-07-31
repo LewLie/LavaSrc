@@ -14,7 +14,6 @@ import java.time.Instant;
 public class SpotifyApiAccessor {
 	private static final Logger log = LoggerFactory.getLogger(SpotifyApiAccessor.class);
 
-	@Getter
 	private final SpotifyApi spotifyApi;
 
 	private final ClientCredentialsRequest clientCredentialsRequest;
@@ -72,4 +71,10 @@ public class SpotifyApiAccessor {
 		return clientId != null && !clientId.isEmpty() && clientSecret != null && !clientSecret.isEmpty();
 	}
 
+	public SpotifyApi getSpotifyApi() {
+		// Try to set up access token if needed
+		getAccessToken();
+
+		return spotifyApi;
+	}
 }
