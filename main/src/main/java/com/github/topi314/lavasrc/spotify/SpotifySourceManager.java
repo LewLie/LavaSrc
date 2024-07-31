@@ -327,8 +327,8 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 				Collections.emptyList(),
 				ExtendedAudioPlaylist.Type.ALBUM,
 				album.getExternalUrls().get("spotify"),
-				album.getImages()[0].getUrl(),
-				album.getArtists()[0].getName(),
+				album.getImages().length == 0 ? null : album.getImages()[0].getUrl(),
+				album.getArtists().length == 0 ? "Unknown" : album.getArtists()[0].getName(),
 				album.getTotalTracks()
 			));
 		}
@@ -341,7 +341,7 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 				Collections.emptyList(),
 				ExtendedAudioPlaylist.Type.ARTIST,
 				artist.getExternalUrls().get("spotify"),
-				artist.getImages()[0].getUrl(),
+				artist.getImages().length == 0 ? null : artist.getImages()[0].getUrl(),
 				artist.getName(),
 				null
 			));
@@ -354,7 +354,7 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 				Collections.emptyList(),
 				ExtendedAudioPlaylist.Type.PLAYLIST,
 				playlist.getExternalUrls().get("spotify"),
-				playlist.getImages()[0].getUrl(),
+				playlist.getImages().length == 0 ? null : playlist.getImages()[0].getUrl(),
 				playlist.getOwner().getDisplayName(),
 				playlist.getTracks().getTotal()
 			));
@@ -645,7 +645,7 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 			this.parseTrackItems(trackWrappers, preview),
 			ExtendedAudioPlaylist.Type.ARTIST,
 			artist.getExternalUrls().get("spotify"),
-			artist.getImages()[0].getUrl(),
+			artist.getImages().length == 0 ? null : artist.getImages()[0].getUrl(),
 			artist.getName(),
 			tracks.length
 		);
@@ -712,7 +712,7 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 				track.getId() != null ? track.getId() : "local",
 				false,
 				track.getExternalUrls().get("spotify"),
-				track.getAlbum().getImages()[0].getUrl(),
+				track.getAlbum().getImages().length == 0 ? null : track.getAlbum().getImages()[0].getUrl(),
 				track.getExternalIds().getExternalIds().get("isrc")
 			),
 			trackWrapper.getTrack(),
