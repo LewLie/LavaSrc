@@ -1,5 +1,8 @@
 package com.github.topi314.lavasrc;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.tools.JsonBrowser;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpClientTools;
@@ -22,7 +25,7 @@ public class LavaSrcTools {
 	private static final Logger log = LoggerFactory.getLogger(LavaSrcTools.class);
 
 	@Nullable
-	public static JsonBrowser fetchResponseAsJson(HttpInterface httpInterface, HttpUriRequest request) throws IOException {
+	public static JsonObject fetchResponseAsJson(HttpInterface httpInterface, HttpUriRequest request) throws IOException {
 		try (CloseableHttpResponse response = httpInterface.execute(request)) {
 			int statusCode = response.getStatusLine().getStatusCode();
 
@@ -42,7 +45,7 @@ public class LavaSrcTools {
 
 			var data = IOUtils.toString(response.getEntity().getContent(), StandardCharsets.UTF_8);
 			log.debug("Response from '{}' was successful: {}", request.getURI(), data);
-			return JsonBrowser.parse(data);
+			return JsonParser.parseString(data).getAsJsonObject();
 		}
 	}
 }
