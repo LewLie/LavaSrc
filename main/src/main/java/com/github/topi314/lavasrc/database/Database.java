@@ -2,6 +2,7 @@ package com.github.topi314.lavasrc.database;
 
 import com.github.benmanes.caffeine.cache.AsyncCache;
 import com.github.topi314.lavasrc.spotify.SpotifySourceManager;
+import com.google.common.collect.Lists;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.zaxxer.hikari.HikariConfig;
@@ -18,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 public class Database {
 
@@ -103,10 +105,6 @@ public class Database {
 	}
 
 	synchronized public CompletableFuture<List<Track>> getSpotifyTrackInfo(String... trackIds) {
-		if(trackIds.length > 50) {
-			throw new IllegalArgumentException("You can only get 50 tracks at same time.");
-		}
-
 		Map<String, CompletableFuture<Track>> completableToTakeAccount = new HashMap<>();
 		List<String> tracksToFetch = new ArrayList<>();
 
@@ -124,10 +122,10 @@ public class Database {
 			}
 		}
 
-		return CompletableFuture.supplyAsync((Supplier<List<Track>>) () -> {
-			try(Statement stm = hikariDataSource.getConnection().createStatement()) {
-				List<String> tracksToFetchFromSpotify = new ArrayList<>();
+		return CompletableFuture.supplyAsync(() -> {
+			List<String> tracksToFetchFromSpotify = new ArrayList<>();
 
+			try(Statement stm = hikariDataSource.getConnection().createStatement()) {
 				for(String trackId : tracksToFetch) {
 					// First try to retrieve metadata from database
 					try(ResultSet res = stm.executeQuery("SELECT metadata FROM `" + configuration.getSpotifyTracksTableName() + "` WHERE `track_id` = '" + trackId + "' LIMIT 1")) {
@@ -141,15 +139,45 @@ public class Database {
 						completableToTakeAccount.get(trackId).complete(new Track.JsonUtil().createModelObject(metadataRaw));
 					}
 				}
+			} catch (SQLException ex) {
+				throw new CompletionException("Exception retrieving spotify track metadata from database, trackToFetch: " + String.join(", ", tracksToFetch), ex);
+			}
 
-				if(!tracksToFetchFromSpotify.isEmpty()) {
+			if(!tracksToFetchFromSpotify.isEmpty()) {
+				var chunks = Lists.partition(tracksToFetchFromSpotify, 50);
+				List<String> tracksFound = new ArrayList<>();
+
+				for(var chunk : chunks) {
 					// We need to fetch tracks from spotify
+					var request = spotifySourceManager.getSpotifyApi().getSeveralTracks(chunk.toArray(String[]::new)).build();
+
+					try {
+						Track[] tracks = request.execute();
+
+						for(Track track : tracks) {
+							if(track == null) continue;
+
+							tracksFound.add(track.getId());
+							completableToTakeAccount.get(track.getId()).complete(track);
+						}
+					} catch (Exception ex) {
+						throw new CompletionException("Exception retrieving spotify track metadata from API, trackIDs: " + String.join(", ", tracksToFetchFromSpotify), ex);
+					}
 				}
 
-				throw new UnsupportedOperationException("Not implemented");
-			} catch (SQLException ex) {
-				throw new CompletionException("Exception retrieving spotify track metadata from database, trackID: " + 0, ex);
+				// Remaining not found tracks
+				List<String> tracksNotFound = new ArrayList<>(tracksToFetchFromSpotify);
+				tracksNotFound.removeAll(tracksFound);
+				tracksNotFound.forEach(trackId -> {
+					completableToTakeAccount.get(trackId).complete(null);
+				});
 			}
+
+			var result = completableToTakeAccount.values().stream().map(CompletableFuture::join).filter(Objects::nonNull).collect(Collectors.toList());
+
+			saveSpotifyTracksMetadata(result, tracksToFetchFromSpotify);
+
+			return result;
 		});
 	}
 
@@ -165,7 +193,7 @@ public class Database {
 		spotifyCachedTracks.synchronous().invalidateAll();
 	}
 
-	private void saveSpotifyTrackInfo(String trackId, JsonObject trackInfo) {
+	private void saveSpotifyTracksMetadata(List<Track> tracks, List<String> fetchedTrackIds) {
 
 	}
 

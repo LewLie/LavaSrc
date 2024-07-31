@@ -30,6 +30,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import se.michaelthelin.spotify.SpotifyApi;
 import se.michaelthelin.spotify.enums.ModelObjectType;
 import se.michaelthelin.spotify.exceptions.SpotifyWebApiException;
 import se.michaelthelin.spotify.model_objects.specification.*;
@@ -721,6 +722,10 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 	@Override
 	public void configureBuilder(Consumer<HttpClientBuilder> configurator) {
 		this.httpInterfaceManager.configureBuilder(configurator);
+	}
+
+	public SpotifyApi getSpotifyApi() {
+		return spotifyApiAccessor.getSpotifyApi();
 	}
 
 	private AlbumSimplified.Builder copyAlbumSimplified(AlbumSimplified album) {
