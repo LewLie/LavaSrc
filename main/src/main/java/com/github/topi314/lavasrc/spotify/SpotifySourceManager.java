@@ -32,6 +32,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import se.michaelthelin.spotify.enums.ModelObjectType;
 import se.michaelthelin.spotify.exceptions.SpotifyWebApiException;
+import se.michaelthelin.spotify.model_objects.AbstractModelObject;
 import se.michaelthelin.spotify.model_objects.specification.*;
 
 import java.io.DataInput;
@@ -487,47 +488,23 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 			if (trackResult == null) break;
 
 			for (var track : trackResult) {
-				var trackAlbumBuilder = track
-					.getAlbum()
-					.builder()
-					.setAlbumGroup(track.getAlbum().getAlbumGroup())
-					.setAlbumType(track.getAlbum().getAlbumType())
-					.setArtists(track.getAlbum().getArtists())
-					.setAvailableMarkets(track.getAlbum().getAvailableMarkets())
-					.setExternalUrls(track.getAlbum().getExternalUrls())
-					.setHref(track.getAlbum().getHref())
-					.setId(track.getAlbum().getId())
-					.setImages(track.getAlbum().getImages())
-					.setName(track.getAlbum().getName())
-					.setReleaseDate(track.getAlbum().getReleaseDate())
-					.setReleaseDatePrecision(track.getAlbum().getReleaseDatePrecision())
-					.setRestrictions(track.getAlbum().getRestrictions())
-					.setType(track.getAlbum().getType())
-					.setUri(track.getAlbum().getUri());
+				var trackAlbumCopy = copyAlbumSimplified(track.getAlbum());
 
 				Map<String, String> externalUrls = new HashMap<>();
 				externalUrls.put("spotify", albumResult.getExternalUrls().get("spotify"));
 
-				trackAlbumBuilder.setExternalUrls(
+				trackAlbumCopy.setExternalUrls(
 					new ExternalUrl.Builder().setExternalUrls(externalUrls).build()
 				);
-
-				trackAlbumBuilder.setName(albumResult.getName());
-				trackAlbumBuilder.setImages(albumResult.getImages());
+				trackAlbumCopy.setName(albumResult.getName());
+				trackAlbumCopy.setImages(albumResult.getImages());
 
 				// Modify album object.
-				try {
-					Class<Track> trackClass = Track.class;
-					Field albumField = trackClass.getDeclaredField("album");
-					albumField.setAccessible(true);
-
-					setFinalField(albumField, track, trackAlbumBuilder.build());
-				} catch (Exception ex) {
-					throw new RuntimeException(ex);
-				}
+				var trackCopy = copyTrack(track);
+				trackCopy.setAlbum(trackAlbumCopy.build());
 
 				if (artistResult != null) {
-					trackWrappers.add(new TrackWrapper(track, Arrays.asList(artistResult.getImages())));
+					trackWrappers.add(new TrackWrapper(trackCopy.build(), Arrays.asList(artistResult.getImages())));
 				}
 			}
 
@@ -750,21 +727,45 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 		this.httpInterfaceManager.configureBuilder(configurator);
 	}
 
-	private static void setFinalField(Field field, Object instance, Object newValue) throws Exception {
-		field.setAccessible(true);
-		Method getDeclaredFields0 = Class.class.getDeclaredMethod("getDeclaredFields0", boolean.class);
-		getDeclaredFields0.setAccessible(true);
-		Field[] fields = (Field[]) getDeclaredFields0.invoke(Field.class, false);
-		Field modifiersField = null;
-		for (Field each : fields) {
-			if ("modifiers".equals(each.getName())) {
-				modifiersField = each;
-				break;
-			}
-		}
-		Objects.requireNonNull(modifiersField).setAccessible(true);
-		modifiersField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
-		field.set(instance, newValue);
+	private AlbumSimplified.Builder copyAlbumSimplified(AlbumSimplified album) {
+		return new AlbumSimplified.Builder()
+			.setAlbumGroup(album.getAlbumGroup())
+			.setAlbumType(album.getAlbumType())
+			.setArtists(album.getArtists())
+			.setAvailableMarkets(album.getAvailableMarkets())
+			.setExternalUrls(album.getExternalUrls())
+			.setHref(album.getHref())
+			.setId(album.getId())
+			.setImages(album.getImages())
+			.setName(album.getName())
+			.setReleaseDate(album.getReleaseDate())
+			.setReleaseDatePrecision(album.getReleaseDatePrecision())
+			.setRestrictions(album.getRestrictions())
+			.setType(album.getType())
+			.setUri(album.getUri());
+	}
+
+	private Track.Builder copyTrack(Track track) {
+		return new Track.Builder()
+			.setAlbum(track.getAlbum())
+			.setArtists(track.getArtists())
+			.setAvailableMarkets(track.getAvailableMarkets())
+			.setDiscNumber(track.getDiscNumber())
+			.setDurationMs(track.getDurationMs())
+			.setExplicit(track.getIsExplicit())
+			.setExternalIds(track.getExternalIds())
+			.setExternalUrls(track.getExternalUrls())
+			.setHref(track.getHref())
+			.setId(track.getId())
+			.setIsPlayable(track.getIsPlayable())
+			.setLinkedFrom(track.getLinkedFrom())
+			.setRestrictions(track.getRestrictions())
+			.setName(track.getName())
+			.setPopularity(track.getPopularity())
+			.setPreviewUrl(track.getPreviewUrl())
+			.setTrackNumber(track.getTrackNumber())
+			.setType(track.getType())
+			.setUri(track.getUri());
 	}
 
 }
