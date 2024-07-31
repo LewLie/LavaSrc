@@ -11,14 +11,17 @@ import com.github.topi314.lavasrc.LavaSrcTools;
 import com.github.topi314.lavasrc.mirror.DefaultMirroringAudioTrackResolver;
 import com.github.topi314.lavasrc.mirror.MirroringAudioSourceManager;
 import com.github.topi314.lavasrc.mirror.MirroringAudioTrackResolver;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
+import com.github.topi314.lavasrc.spotify.external.SearchItemRequestSpecial;
+import com.github.topi314.lavasrc.spotify.external.SearchResultSpecial;
+import com.github.topi314.lavasrc.spotify.external.TrackWrapper;
+import com.neovisionaries.i18n.CountryCode;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayerManager;
-import com.sedmelluq.discord.lavaplayer.tools.JsonBrowser;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpClientTools;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpConfigurable;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpInterfaceManager;
 import com.sedmelluq.discord.lavaplayer.track.*;
+import lombok.Setter;
+import org.apache.hc.core5.http.ParseException;
 import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpHead;
@@ -27,9 +30,14 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import se.michaelthelin.spotify.enums.ModelObjectType;
+import se.michaelthelin.spotify.exceptions.SpotifyWebApiException;
+import se.michaelthelin.spotify.model_objects.specification.*;
 
 import java.io.DataInput;
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -40,6 +48,7 @@ import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+@SuppressWarnings("unused")
 public class SpotifySourceManager extends MirroringAudioSourceManager implements HttpConfigurable, AudioSearchManager, AudioLyricsManager {
 
 	public static final Pattern URL_PATTERN = Pattern.compile("(https?://)(www\\.)?open\\.spotify\\.com/((?<region>[a-zA-Z-]+)/)?(user/(?<user>[a-zA-Z0-9-_]+)/)?(?<type>track|album|playlist|artist)/(?<identifier>[a-zA-Z0-9-_]+)");
@@ -56,12 +65,14 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 	private static final Logger log = LoggerFactory.getLogger(SpotifySourceManager.class);
 
 	private final HttpInterfaceManager httpInterfaceManager = HttpClientTools.createDefaultThreadLocalManager();
-	private final SpotifyTokenTracker tokenTracker;
+	private final SpotifyApiAccessor spotifyApiAccessor;
 	private final String spDc;
 	private final String countryCode;
+
+	@Setter
 	private int playlistPageLimit = 6;
+	@Setter
 	private int albumPageLimit = 6;
-	private boolean localFiles;
 
 	private String spToken;
 	private Instant spTokenExpire;
@@ -85,25 +96,13 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 	public SpotifySourceManager(String clientId, String clientSecret, String spDc, String countryCode, Function<Void, AudioPlayerManager> audioPlayerManager, MirroringAudioTrackResolver mirroringAudioTrackResolver) {
 		super(audioPlayerManager, mirroringAudioTrackResolver);
 
-		this.tokenTracker = new SpotifyTokenTracker(this, clientId, clientSecret);
+		this.spotifyApiAccessor = new SpotifyApiAccessor(clientId, clientSecret);
 		this.spDc = spDc;
 
 		if (countryCode == null || countryCode.isEmpty()) {
 			countryCode = "US";
 		}
 		this.countryCode = countryCode;
-	}
-
-	public void setPlaylistPageLimit(int playlistPageLimit) {
-		this.playlistPageLimit = playlistPageLimit;
-	}
-
-	public void setAlbumPageLimit(int albumPageLimit) {
-		this.albumPageLimit = albumPageLimit;
-	}
-
-	public void setLocalFiles(boolean localFiles) {
-		this.localFiles = localFiles;
 	}
 
 	@NotNull
@@ -129,7 +128,7 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 				if (item == AudioReference.NO_TRACK) {
 					item = this.getSearch(String.format("%s %s", audioTrack.getInfo().title, audioTrack.getInfo().author), false);
 				}
-			} catch (IOException e) {
+			} catch (IOException | ParseException e) {
 				throw new RuntimeException(e);
 			}
 
@@ -162,19 +161,16 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 		request.addHeader("App-Platform", "WebPlayer");
 		request.addHeader("Authorization", "Bearer " + this.getSpToken());
 		var json = LavaSrcTools.fetchResponseAsJson(this.httpInterfaceManager.getInterface(), request);
-
 		if (json == null) {
 			return null;
 		}
 
 		var lyrics = new ArrayList<AudioLyrics.Line>();
-		for (var line : json.get("lyrics").getAsJsonObject().get("lines").getAsJsonArray()) {
-			var lineJson = line.getAsJsonObject();
-
+		for (var line : json.get("lyrics").get("lines").values()) {
 			lyrics.add(new BasicAudioLyrics.BasicLine(
-				Duration.ofMillis(lineJson.get("startTimeMs").getAsLong()),
+				Duration.ofMillis(line.get("startTimeMs").asLong(0)),
 				null,
-				lineJson.get("words").getAsString()
+				line.get("words").text()
 			));
 		}
 
@@ -202,7 +198,7 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 			if (query.startsWith(SEARCH_PREFIX)) {
 				return this.getAutocomplete(query.substring(SEARCH_PREFIX.length()), types);
 			}
-		} catch (IOException e) {
+		} catch (IOException | ParseException | SpotifyWebApiException e) {
 			throw new RuntimeException(e);
 		}
 		return null;
@@ -259,7 +255,7 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 				case "artist":
 					return this.getArtist(id, preview);
 			}
-		} catch (IOException e) {
+		} catch (IOException | ParseException e) {
 			throw new RuntimeException(e);
 		}
 		return null;
@@ -271,11 +267,8 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 		request.addHeader("Cookie", "sp_dc=" + this.spDc);
 
 		var json = LavaSrcTools.fetchResponseAsJson(this.httpInterfaceManager.getInterface(), request);
-
-		if(json == null) return;
-
-		this.spToken = json.get("accessToken").getAsString();
-		this.spTokenExpire = Instant.ofEpochMilli(json.get("accessTokenExpirationTimestampMs").getAsLong());
+		this.spToken = json.get("accessToken").text();
+		this.spTokenExpire = Instant.ofEpochMilli(json.get("accessTokenExpirationTimestampMs").asLong(0));
 	}
 
 	public String getSpToken() throws IOException {
@@ -285,264 +278,457 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 		return this.spToken;
 	}
 
-	@Nullable
-	public JsonObject getJson(String uri) throws IOException {
-		var request = new HttpGet(uri);
-		request.addHeader("Authorization", "Bearer " + this.tokenTracker.getAccessToken());
-		return LavaSrcTools.fetchResponseAsJson(this.httpInterfaceManager.getInterface(), request);
-	}
-
-	private AudioSearchResult getAutocomplete(String query, Set<AudioSearchResult.Type> types) throws IOException {
+	private AudioSearchResult getAutocomplete(String query, Set<AudioSearchResult.Type> types) throws IOException, ParseException, SpotifyWebApiException {
 		if (types.isEmpty()) {
 			types = SEARCH_TYPES;
 		}
-		var url = API_BASE + "search?q=" + URLEncoder.encode(query, StandardCharsets.UTF_8) + "&type=" + types.stream().map(AudioSearchResult.Type::getName).collect(Collectors.joining(","));
-		var json = this.getJson(url);
 
-		if (json == null) {
+		var api = spotifyApiAccessor.getSpotifyApi();
+
+		// Custom handle for Albums
+		var requestBuilder = new SearchItemRequestSpecial.Builder(api.getAccessToken())
+			.setDefaults(api.getHttpManager(), api.getScheme(), api.getHost(), api.getPort())
+			.q(URLEncoder.encode(query, StandardCharsets.UTF_8))
+			.type(types.stream().map(AudioSearchResult.Type::getName).collect(Collectors.joining(",")))
+			.build();
+
+		SearchResultSpecial result;
+
+		try {
+			result = requestBuilder.execute();
+		} catch (SpotifyWebApiException ex) {
 			return AudioSearchResult.EMPTY;
 		}
 
 		var albums = new ArrayList<AudioPlaylist>();
-		for (var album : json.get("albums").getAsJsonObject().get("items").getAsJsonArray()) {
-			var albumJson = album.getAsJsonObject();
 
+		for (var album : result.getAlbums().getItems()) {
 			albums.add(new SpotifyAudioPlaylist(
-				albumJson.get("name").getAsString(),
+				album.getName(),
 				Collections.emptyList(),
 				ExtendedAudioPlaylist.Type.ALBUM,
-				albumJson.get("external_urls").getAsJsonObject().get("spotify").getAsString(),
-				albumJson.get("images").getAsJsonArray().get(0).getAsJsonObject().get("url").getAsString(),
-				albumJson.get("artists").getAsJsonArray().get(0).getAsJsonObject().get("name").getAsString(),
-				albumJson.get("total_tracks").getAsInt()
+				album.getExternalUrls().get("spotify"),
+				album.getImages()[0].getUrl(),
+				album.getArtists()[0].getName(),
+				album.getTotalTracks()
 			));
 		}
 
 		var artists = new ArrayList<AudioPlaylist>();
-		for (var artist : json.get("artists").getAsJsonObject().get("items").getAsJsonArray()) {
-			var artistJson = artist.getAsJsonObject();
 
+		for (var artist : result.getArtists().getItems()) {
 			artists.add(new SpotifyAudioPlaylist(
-				artistJson.get("name").getAsString() + "'s Top Tracks",
+				artist.getName() + "'s Top Tracks",
 				Collections.emptyList(),
 				ExtendedAudioPlaylist.Type.ARTIST,
-				artistJson.get("external_urls").getAsJsonObject().get("spotify").getAsString(),
-				artistJson.get("images").getAsJsonArray().get(0).getAsJsonObject().get("url").getAsString(),
-				artistJson.get("name").getAsString(),
+				artist.getExternalUrls().get("spotify"),
+				artist.getImages()[0].getUrl(),
+				artist.getName(),
 				null
 			));
 		}
 
 		var playlists = new ArrayList<AudioPlaylist>();
-		for (var playlist : json.get("playlists").getAsJsonObject().get("items").getAsJsonArray()) {
-			var playlistJson = playlist.getAsJsonObject();
-
+		for (var playlist : result.getPlaylists().getItems()) {
 			playlists.add(new SpotifyAudioPlaylist(
-				playlistJson.get("name").getAsString(),
+				playlist.getName(),
 				Collections.emptyList(),
 				ExtendedAudioPlaylist.Type.PLAYLIST,
-				playlistJson.get("external_urls").getAsJsonObject().get("spotify").getAsString(),
-				playlistJson.get("images").getAsJsonArray().get(0).getAsJsonObject().get("url").getAsString(),
-				playlistJson.get("owner").getAsJsonObject().get("display_name").getAsString(),
-				(int) playlistJson.get("tracks").getAsJsonObject().get("total").getAsLong()
+				playlist.getExternalUrls().get("spotify"),
+				playlist.getImages()[0].getUrl(),
+				playlist.getOwner().getDisplayName(),
+				playlist.getTracks().getTotal()
 			));
 		}
 
-		var tracks = this.parseTrackItems(json.get("tracks").getAsJsonObject(), false);
-
+		var tracks = this.parseTrackItems(
+			Arrays.stream(result.getTracks().getItems()).map(e -> new TrackWrapper(e, new ArrayList<>())).collect(Collectors.toList()),
+			false
+		);
 		return new BasicAudioSearchResult(tracks, albums, artists, playlists, new ArrayList<>());
 	}
 
-	public AudioItem getSearch(String query, boolean preview) throws IOException {
-		var json = this.getJson(API_BASE + "search?q=" + URLEncoder.encode(query, StandardCharsets.UTF_8) + "&type=track");
+	public AudioItem getSearch(String query, boolean preview) throws IOException, ParseException {
+		var tracksRequest = spotifyApiAccessor
+			.getSpotifyApi()
+			.searchTracks(URLEncoder.encode(query, StandardCharsets.UTF_8))
+			.build();
 
-		if (json == null || json.getAsJsonObject().get("tracks").getAsJsonObject().get("items").getAsJsonArray().isEmpty()) {
+		Paging<Track> tracksResult = null;
+
+		try {
+			tracksResult = tracksRequest.execute();
+		} catch (SpotifyWebApiException ignored) {
+		}
+
+		if (tracksResult == null || tracksResult.getItems().length == 0) {
 			return AudioReference.NO_TRACK;
 		}
 
-		var artistIds = json.get("tracks").getAsJsonObject().get("items").getAsJsonArray().asList().stream().map(track -> track.getAsJsonObject().get("artists").getAsJsonArray().get(0).getAsJsonObject().get("id").getAsString()).collect(Collectors.joining(","));
-		var artistJson = this.getJson(API_BASE + "artists?ids=" + artistIds);
+		var artistIds = Arrays.stream(tracksResult.getItems()).map(track -> track.getArtists()[0].getId()).toArray(String[]::new);
 
-		if (artistJson != null) {
-			for (var artist : artistJson.get("artists").getAsJsonArray()) {
-				var artistJsonObject = artist.getAsJsonObject();
+		var artistRequest = spotifyApiAccessor
+			.getSpotifyApi()
+			.getSeveralArtists(artistIds)
+			.build();
 
-				for (var track : json.get("tracks").getAsJsonObject().get("items").getAsJsonArray()) {
-					var trackJsonObject = track.getAsJsonObject();
+		Artist[] artistResult = null;
 
-					if (trackJsonObject.get("artists").getAsJsonArray().get(0).getAsJsonObject().get("id").getAsString().equals(artistJsonObject.get("id").getAsString())) {
-						trackJsonObject.get("artists").getAsJsonArray().get(0).getAsJsonObject().add("images", artistJsonObject.get("images"));
+		try {
+			artistResult = artistRequest.execute();
+		} catch (SpotifyWebApiException ignored) {
+		}
+
+		var tracksWrappers = Arrays.stream(tracksResult.getItems()).map(e -> new TrackWrapper(e, new ArrayList<>())).collect(Collectors.toList());
+
+		if (artistResult != null) {
+			for (var artist : artistResult) {
+				for (var trackWrapper : tracksWrappers) {
+					if (trackWrapper.getTrack().getArtists()[0].getId().equals(artist.getId())) {
+						trackWrapper.setArtistImages(Arrays.asList(artist.getImages()));
 					}
 				}
 			}
 		}
 
-		return new BasicAudioPlaylist("Search results for: " + query, this.parseTrackItems(json.get("tracks").getAsJsonObject(), preview), null, true);
+		return new BasicAudioPlaylist("Search results for: " + query, this.parseTrackItems(tracksWrappers, preview), null, true);
 	}
 
-	public AudioItem getRecommendations(String query, boolean preview) throws IOException {
-		var json = this.getJson(API_BASE + "recommendations?" + query);
-		if (json == null || json.get("tracks").getAsJsonArray().isEmpty()) {
+	public AudioItem getRecommendations(String query, boolean preview) throws IOException, ParseException {
+		var queryParts = query.split("&");
+
+		var requestBuilder = spotifyApiAccessor.getSpotifyApi()
+			.getRecommendations();
+
+		for(String queryPart : queryParts) {
+			var parts = queryPart.split("=");
+			requestBuilder.setQueryParameter(parts[0], parts[1]);
+		}
+
+		Recommendations result = null;
+
+		try {
+			result = requestBuilder.build().execute();
+		} catch (SpotifyWebApiException ignore) {}
+
+		if (result == null || result.getTracks().length == 0) {
 			return AudioReference.NO_TRACK;
 		}
 
-		return new SpotifyAudioPlaylist("Spotify Recommendations:", this.parseTracks(json, preview), ExtendedAudioPlaylist.Type.RECOMMENDATIONS, null, null, null, null);
+		return new SpotifyAudioPlaylist(
+			"Spotify Recommendations:",
+			this.parseTrackItems(Arrays.stream(result.getTracks()).map(e -> new TrackWrapper(e, new ArrayList<>())).collect(Collectors.toList()), preview),
+			ExtendedAudioPlaylist.Type.RECOMMENDATIONS,
+			null,
+			null,
+			null,
+			null
+		);
 	}
 
-	public AudioItem getAlbum(String id, boolean preview) throws IOException {
-		var json = this.getJson(API_BASE + "albums/" + id);
-		if (json == null) {
+	public AudioItem getAlbum(String id, boolean preview) throws IOException, ParseException {
+		var albumRequest = spotifyApiAccessor.getSpotifyApi()
+			.getAlbum(id)
+			.build();
+
+		Album albumResult = null;
+
+		try {
+			albumResult = albumRequest.execute();
+		} catch (SpotifyWebApiException ignore) {}
+
+		if (albumResult == null) {
 			return AudioReference.NO_TRACK;
 		}
 
-		var artistJson = this.getJson(API_BASE + "artists/" + json.get("artists").getAsJsonArray().get(0).getAsJsonObject().get("id").getAsString());
-		if (artistJson == null) {
-			artistJson = new JsonObject();
-		}
+		var artistRequest = spotifyApiAccessor.getSpotifyApi()
+			.getArtist(albumResult.getArtists()[0].getId())
+			.build();
+
+		Artist artistResult = null;
+
+		try {
+			artistResult = artistRequest.execute();
+		} catch (SpotifyWebApiException ignore) {}
 
 		var tracks = new ArrayList<AudioTrack>();
-		JsonObject page;
+		Paging<TrackSimplified> albumTracksResult = null;
 		var offset = 0;
 		var pages = 0;
 		do {
-			page = this.getJson(API_BASE + "albums/" + id + "/tracks?limit=" + ALBUM_MAX_PAGE_ITEMS + "&offset=" + offset);
+			var albumsTracksRequest = spotifyApiAccessor.getSpotifyApi()
+				.getAlbumsTracks(id)
+				.limit(ALBUM_MAX_PAGE_ITEMS)
+				.offset(offset)
+				.build();
+
+			try {
+				albumTracksResult = albumsTracksRequest.execute();
+			} catch (SpotifyWebApiException ignore) {}
+
+			if(albumTracksResult == null) break;
+
 			offset += ALBUM_MAX_PAGE_ITEMS;
 
-			var tracksPage = this.getJson(API_BASE + "tracks/?ids=" + Objects.requireNonNull(page).get("items").getAsJsonArray().asList().stream().map(track -> track.getAsJsonObject().get("id").getAsString()).collect(Collectors.joining(",")));
+			var tracksRequest = spotifyApiAccessor.getSpotifyApi()
+				.getSeveralTracks(
+					Arrays.stream(albumTracksResult.getItems()).map(TrackSimplified::getId).toArray(String[]::new)
+				)
+				.build();
 
-			for (var track : Objects.requireNonNull(tracksPage).get("tracks").getAsJsonArray()) {
-				var trackJsonObject = track.getAsJsonObject();
-				var albumJson = new JsonObject();
-				albumJson.add("external_urls", json.get("external_urls"));
-				albumJson.add("name", json.get("name"));
-				albumJson.add("images", json.get("images"));
-				trackJsonObject.add("album", albumJson);
+			Track[] trackResult = null;
+			List<TrackWrapper> trackWrappers = new ArrayList<>();
 
-				trackJsonObject.get("artists").getAsJsonArray().get(0).getAsJsonObject().add("images", artistJson.get("images"));
+			try {
+				trackResult = tracksRequest.execute();
+			} catch (SpotifyWebApiException ignore) {}
+
+			if (trackResult == null) break;
+
+			for (var track : trackResult) {
+				var trackAlbumBuilder = track
+					.getAlbum()
+					.builder()
+					.setAlbumGroup(track.getAlbum().getAlbumGroup())
+					.setAlbumType(track.getAlbum().getAlbumType())
+					.setArtists(track.getAlbum().getArtists())
+					.setAvailableMarkets(track.getAlbum().getAvailableMarkets())
+					.setExternalUrls(track.getAlbum().getExternalUrls())
+					.setHref(track.getAlbum().getHref())
+					.setId(track.getAlbum().getId())
+					.setImages(track.getAlbum().getImages())
+					.setName(track.getAlbum().getName())
+					.setReleaseDate(track.getAlbum().getReleaseDate())
+					.setReleaseDatePrecision(track.getAlbum().getReleaseDatePrecision())
+					.setRestrictions(track.getAlbum().getRestrictions())
+					.setType(track.getAlbum().getType())
+					.setUri(track.getAlbum().getUri());
+
+				Map<String, String> externalUrls = new HashMap<>();
+				externalUrls.put("spotify", albumResult.getExternalUrls().get("spotify"));
+
+				trackAlbumBuilder.setExternalUrls(
+					new ExternalUrl.Builder().setExternalUrls(externalUrls).build()
+				);
+
+				trackAlbumBuilder.setName(albumResult.getName());
+				trackAlbumBuilder.setImages(albumResult.getImages());
+
+				// Modify album object.
+				try {
+					Class<Track> trackClass = Track.class;
+					Field albumField = trackClass.getDeclaredField("album");
+					albumField.setAccessible(true);
+
+					Field modifiersField = Field.class.getDeclaredField("modifiers");
+					modifiersField.setAccessible(true);
+					modifiersField.setInt(albumField, albumField.getModifiers() & ~Modifier.FINAL);
+
+					albumField.set(track, trackAlbumBuilder.build());
+				} catch (Exception ex) {
+					throw new RuntimeException(ex);
+				}
+
+				if (artistResult != null) {
+					trackWrappers.add(new TrackWrapper(track, Arrays.asList(artistResult.getImages())));
+				}
 			}
 
-			tracks.addAll(this.parseTracks(tracksPage, preview));
+			tracks.addAll(this.parseTrackItems(trackWrappers, preview));
 		}
-		while (page.get("next").getAsString() != null && ++pages < this.albumPageLimit);
+		while (albumTracksResult.getNext() != null && ++pages < this.albumPageLimit);
 
 		if (tracks.isEmpty()) {
 			return AudioReference.NO_TRACK;
 		}
 
-		return new SpotifyAudioPlaylist(json.get("name").getAsString(), tracks, ExtendedAudioPlaylist.Type.ALBUM, json.get("external_urls").getAsJsonObject().get("spotify").getAsString(), json.get("images").getAsJsonArray().get(0).getAsJsonObject().get("url").getAsString(), json.get("artists").getAsJsonArray().get(0).getAsJsonObject().get("name").getAsString(), json.get("total_tracks").getAsInt());
-
+		return new SpotifyAudioPlaylist(
+			albumResult.getName(),
+			tracks,
+			ExtendedAudioPlaylist.Type.ALBUM,
+			albumResult.getExternalUrls().get("spotify"),
+			albumResult.getImages().length == 0 ? null : albumResult.getImages()[0].getUrl(),
+			albumResult.getArtists()[0].getName(),
+			albumResult.getTracks().getTotal()
+		);
 	}
 
-	public AudioItem getPlaylist(String id, boolean preview) throws IOException {
-		var json = this.getJson(API_BASE + "playlists/" + id);
-		if (json == null) {
+	public AudioItem getPlaylist(String id, boolean preview) throws IOException, ParseException {
+		var playListRequest = spotifyApiAccessor.getSpotifyApi()
+			.getPlaylist(id)
+			.build();
+
+		Playlist playList = null;
+
+		try {
+			playList = playListRequest.execute();
+		} catch (SpotifyWebApiException ignore) {}
+
+		if (playList == null) {
 			return AudioReference.NO_TRACK;
 		}
 
 		var tracks = new ArrayList<AudioTrack>();
-		JsonObject page;
+		Paging<PlaylistTrack> page = null;
 		var offset = 0;
 		var pages = 0;
 		do {
-			page = this.getJson(API_BASE + "playlists/" + id + "/tracks?limit=" + PLAYLIST_MAX_PAGE_ITEMS + "&offset=" + offset);
+			var playListTracksRequest = spotifyApiAccessor.getSpotifyApi()
+				.getPlaylistsItems(id)
+				.limit(PLAYLIST_MAX_PAGE_ITEMS)
+				.offset(offset)
+				.build();
+
+			try {
+				page = playListTracksRequest.execute();
+			} catch (SpotifyWebApiException ignore) {}
+
+			if (page == null) break;
+
 			offset += PLAYLIST_MAX_PAGE_ITEMS;
 
-			for (var value : Objects.requireNonNull(page).get("items").getAsJsonArray()) {
-				var valueJsonObject = value.getAsJsonObject();
-				var track = valueJsonObject.get("track");
-				if (track.isJsonNull() || track.getAsJsonObject().get("type").getAsString().equals("episode") || (!this.localFiles && track.getAsJsonObject().get("is_local").getAsBoolean())) {
+			for (var value : page.getItems()) {
+				var track = value.getTrack();
+				if (track == null || track.getType() == ModelObjectType.EPISODE /* || (!this.localFiles && track.getAsJsonObject().get("is_local").getAsBoolean()) */) {
 					continue;
 				}
 
-				tracks.add(this.parseTrack(track.getAsJsonObject(), preview));
+				tracks.add(this.parseTrack(new TrackWrapper((Track) track, new ArrayList<>()), preview));
 			}
 
 		}
-		while (page.get("next").getAsString() != null && ++pages < this.playlistPageLimit);
+		while (page.getNext() != null && ++pages < this.playlistPageLimit);
 
 		if (tracks.isEmpty()) {
 			return AudioReference.NO_TRACK;
 		}
 
-		return new SpotifyAudioPlaylist(json.get("name").getAsString(), tracks, ExtendedAudioPlaylist.Type.PLAYLIST, json.get("external_urls").getAsJsonObject().get("spotify").getAsString(), json.get("images").getAsJsonArray().get(0).getAsJsonObject().get("url").getAsString(), json.get("owner").getAsJsonObject().get("display_name").getAsString(), json.get("tracks").getAsJsonObject().get("total").getAsInt());
+		return new SpotifyAudioPlaylist(
+			playList.getName(),
+			tracks,
+			ExtendedAudioPlaylist.Type.PLAYLIST,
+			playList.getExternalUrls().get("spotify"),
+			playList.getImages()[0].getUrl(),
+			playList.getOwner().getDisplayName(),
+			playList.getTracks().getTotal()
+		);
 	}
 
-	public AudioItem getArtist(String id, boolean preview) throws IOException {
-		var json = this.getJson(API_BASE + "artists/" + id);
-		if (json == null) {
+	public AudioItem getArtist(String id, boolean preview) throws IOException, ParseException {
+		var artistRequest = spotifyApiAccessor.getSpotifyApi()
+			.getArtist(id)
+			.build();
+
+		Artist artist = null;
+
+		try {
+			artist = artistRequest.execute();
+		} catch (SpotifyWebApiException ignore) {}
+
+		if (artist == null) {
 			return AudioReference.NO_TRACK;
 		}
 
-		var tracksJson = this.getJson(API_BASE + "artists/" + id + "/top-tracks?market=" + this.countryCode);
-		if (tracksJson == null || tracksJson.get("tracks").getAsJsonArray().isEmpty()) {
+		var topTracksRequest = spotifyApiAccessor.getSpotifyApi()
+			.getArtistsTopTracks(id, CountryCode.valueOf(this.countryCode))
+			.build();
+
+		Track[] tracks = null;
+
+		try {
+			tracks = topTracksRequest.execute();
+		} catch (SpotifyWebApiException ignore) {}
+
+		if (tracks == null || tracks.length == 0) {
 			return AudioReference.NO_TRACK;
 		}
 
-		for (var track : tracksJson.get("tracks").getAsJsonArray()) {
-			track.getAsJsonObject().get("artists").getAsJsonArray().get(0).getAsJsonObject().add("images", json.get("images"));
+		List<TrackWrapper> trackWrappers = new ArrayList<>();
+
+		for (var track : tracks) {
+			trackWrappers.add(new TrackWrapper(track, Arrays.asList(artist.getImages())));
 		}
 
-		return new SpotifyAudioPlaylist(json.get("name").getAsString() + "'s Top Tracks", this.parseTracks(tracksJson, preview), ExtendedAudioPlaylist.Type.ARTIST, json.get("external_urls").getAsJsonObject().get("spotify").getAsString(), json.get("images").getAsJsonArray().get(0).getAsJsonObject().get("url").getAsString(), json.get("name").getAsString(), tracksJson.get("tracks").getAsJsonObject().get("total").getAsInt());
+		return new SpotifyAudioPlaylist(
+			artist.getName() + "'s Top Tracks",
+			this.parseTrackItems(trackWrappers, preview),
+			ExtendedAudioPlaylist.Type.ARTIST,
+			artist.getExternalUrls().get("spotify"),
+			artist.getImages()[0].getUrl(),
+			artist.getName(),
+			tracks.length
+		);
 	}
 
-	public AudioItem getTrack(String id, boolean preview) throws IOException {
-		var json = this.getJson(API_BASE + "tracks/" + id);
+	public AudioItem getTrack(String id, boolean preview) throws IOException, ParseException {
+		var trackRequest = spotifyApiAccessor.getSpotifyApi()
+			.getTrack(id)
+			.build();
 
-		if (json == null) {
+		Track track = null;
+
+		try {
+			track = trackRequest.execute();
+		} catch (SpotifyWebApiException ignore) {}
+
+		if (track == null) {
 			return AudioReference.NO_TRACK;
 		}
 
-		var artistJson = this.getJson(API_BASE + "artists/" + json.get("artists").getAsJsonArray().get(0).getAsJsonObject().get("id").getAsString());
+		var artistRequest = spotifyApiAccessor.getSpotifyApi()
+			.getArtist(track.getArtists()[0].getId())
+			.build();
 
-		if (artistJson != null) {
-			json.get("artists").getAsJsonArray().get(0).getAsJsonObject().add("images", artistJson.getAsJsonObject().get("images"));
+		Artist artist = null;
+
+		try {
+			artist = artistRequest.execute();
+		} catch (SpotifyWebApiException ignore) {}
+
+		if (artist != null) {
+			return this.parseTrack(new TrackWrapper(track, Arrays.asList(artist.getImages())), preview);
+		} else {
+			return this.parseTrack(new TrackWrapper(track, new ArrayList<>()), preview);
 		}
 
-		return this.parseTrack(json, preview);
 	}
 
-	private List<AudioTrack> parseTracks(JsonObject json, boolean preview) {
-		var tracks = new ArrayList<AudioTrack>();
+	private List<AudioTrack> parseTrackItems(List<TrackWrapper> tracks, boolean preview) {
+		var tracksResult = new ArrayList<AudioTrack>();
 
-		for (var value : json.get("tracks").getAsJsonArray()) {
-			var valueJson = value.getAsJsonObject();
-			tracks.add(this.parseTrack(valueJson, preview));
-		}
-
-		return tracks;
-	}
-
-	private List<AudioTrack> parseTrackItems(JsonObject json, boolean preview) {
-		var tracks = new ArrayList<AudioTrack>();
-		for (var value : json.get("items").getAsJsonArray()) {
-			var valueJson = value.getAsJsonObject();
-
+		for (var track : tracks) {
+			/*
+			TODO: How handle this?
 			if (valueJson.get("is_local").getAsBoolean()) {
 				continue;
 			}
+			*/
 
-			tracks.add(this.parseTrack(valueJson, preview));
+			tracksResult.add(this.parseTrack(track, preview));
 		}
-		return tracks;
+
+		return tracksResult;
 	}
 
-	private AudioTrack parseTrack(JsonObject json, boolean preview) {
+	private AudioTrack parseTrack(TrackWrapper trackWrapper, boolean preview) {
+		Track track = trackWrapper.getTrack();
+
 		return new SpotifyAudioTrack(
 			new AudioTrackInfo(
-				json.get("name").getAsString(),
-				json.get("artists").getAsJsonArray().get(0).getAsJsonObject().get("name").getAsString().isEmpty() ? "Unknown" : json.get("artists").getAsJsonArray().get(0).getAsJsonObject().get("name").getAsString(),
-				preview ? PREVIEW_LENGTH : json.get("duration_ms").getAsInt(),
-				json.get("id").getAsString() != null ? json.get("id").getAsString() : "local",
+				track.getName(),
+				track.getArtists()[0].getName().isEmpty() ? "Unknown" : track.getArtists()[0].getName(),
+				preview ? PREVIEW_LENGTH : track.getDurationMs(),
+				track.getId() != null ? track.getId() : "local",
 				false,
-				json.get("external_urls").getAsJsonObject().get("spotify").getAsString(),
-				json.get("album").getAsJsonObject().get("images").getAsJsonArray().get(0).getAsJsonObject().get("url").getAsString(),
-				json.get("external_ids").getAsJsonObject().get("isrc").getAsString()
+				track.getExternalUrls().get("spotify"),
+				track.getAlbum().getImages()[0].getUrl(),
+				track.getExternalIds().getExternalIds().get("isrc")
 			),
-			json.get("album").getAsJsonObject().get("name").getAsString(),
-			json.get("album").getAsJsonObject().get("external_urls").getAsJsonObject().get("spotify").getAsString(),
-			json.get("artists").getAsJsonArray().get(0).getAsJsonObject().get("external_urls").getAsJsonObject().get("spotify").getAsString(),
-			json.get("artists").getAsJsonArray().get(0).getAsJsonObject().get("images").getAsJsonArray().get(0).getAsJsonObject().get("url").getAsString(),
-			json.get("preview_url").getAsString(),
+			track.getAlbum().getName(),
+			track.getAlbum().getExternalUrls().get("spotify"),
+			track.getArtists()[0].getExternalUrls().get("spotify"),
+			trackWrapper.getArtistImages().isEmpty() ? null : trackWrapper.getArtistImages().get(0).getUrl(),
+			track.getPreviewUrl(),
 			preview,
 			this
 		);

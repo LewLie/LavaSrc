@@ -25,7 +25,7 @@ public class LavaSrcTools {
 	private static final Logger log = LoggerFactory.getLogger(LavaSrcTools.class);
 
 	@Nullable
-	public static JsonObject fetchResponseAsJson(HttpInterface httpInterface, HttpUriRequest request) throws IOException {
+	public static JsonBrowser fetchResponseAsJson(HttpInterface httpInterface, HttpUriRequest request) throws IOException {
 		try (CloseableHttpResponse response = httpInterface.execute(request)) {
 			int statusCode = response.getStatusLine().getStatusCode();
 
@@ -45,7 +45,7 @@ public class LavaSrcTools {
 
 			var data = IOUtils.toString(response.getEntity().getContent(), StandardCharsets.UTF_8);
 			log.debug("Response from '{}' was successful: {}", request.getURI(), data);
-			return JsonParser.parseString(data).getAsJsonObject();
+			return JsonBrowser.parse(data);
 		}
 	}
 }

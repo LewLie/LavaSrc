@@ -28,6 +28,16 @@ dependencies {
 
     lyricsDependency("protocol")
     lyricsDependency("client")
+
+    implementation("se.michaelthelin.spotify:spotify-web-api-java:8.4.1")
+    implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
+    implementation("com.zaxxer:HikariCP:5.1.0")
+
+    compileOnly("org.projectlombok:lombok:1.18.34")
+    annotationProcessor("org.projectlombok:lombok:1.18.34")
+
+    testCompileOnly("org.projectlombok:lombok:1.18.34")
+    testAnnotationProcessor("org.projectlombok:lombok:1.18.34")
 }
 
 publishing {
