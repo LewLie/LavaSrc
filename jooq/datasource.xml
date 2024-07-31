@@ -14,7 +14,7 @@
          - org.jooq.codegen.JavaGenerator
          - org.jooq.codegen.ScalaGenerator
          Defaults to org.jooq.codegen.JavaGenerator -->
-    <name>org.jooq.codegen.KotlinGenerator</name>
+    <name>org.jooq.codegen.JavaGenerator</name>
 
     <database>
       <!-- The database type. The format here is:
@@ -38,7 +38,7 @@
 
     <target>
       <!-- The destination package of your generated classes (within the destination directory) -->
-      <packageName>com.github.topi314.lavasrc</packageName>
+      <packageName>com.github.topi314.lavasrc.jooq</packageName>
 
       <!-- The destination directory of your generated classes. Using Maven directory layout here -->
       <directory>../main/src/main/java/</directory>
