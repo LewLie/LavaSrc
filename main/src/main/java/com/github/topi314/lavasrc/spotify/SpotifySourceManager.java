@@ -37,6 +37,7 @@ import se.michaelthelin.spotify.model_objects.specification.*;
 import java.io.DataInput;
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -520,11 +521,7 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 					Field albumField = trackClass.getDeclaredField("album");
 					albumField.setAccessible(true);
 
-					Field modifiersField = Field.class.getDeclaredField("modifiers");
-					modifiersField.setAccessible(true);
-					modifiersField.setInt(albumField, albumField.getModifiers() & ~Modifier.FINAL);
-
-					albumField.set(track, trackAlbumBuilder.build());
+					setFinalField(albumField, track, trackAlbumBuilder.build());
 				} catch (Exception ex) {
 					throw new RuntimeException(ex);
 				}
@@ -751,6 +748,23 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 	@Override
 	public void configureBuilder(Consumer<HttpClientBuilder> configurator) {
 		this.httpInterfaceManager.configureBuilder(configurator);
+	}
+
+	private static void setFinalField(Field field, Object instance, Object newValue) throws Exception {
+		field.setAccessible(true);
+		Method getDeclaredFields0 = Class.class.getDeclaredMethod("getDeclaredFields0", boolean.class);
+		getDeclaredFields0.setAccessible(true);
+		Field[] fields = (Field[]) getDeclaredFields0.invoke(Field.class, false);
+		Field modifiersField = null;
+		for (Field each : fields) {
+			if ("modifiers".equals(each.getName())) {
+				modifiersField = each;
+				break;
+			}
+		}
+		Objects.requireNonNull(modifiersField).setAccessible(true);
+		modifiersField.setInt(field, field.getModifiers() & ~Modifier.FINAL);
+		field.set(instance, newValue);
 	}
 
 }
