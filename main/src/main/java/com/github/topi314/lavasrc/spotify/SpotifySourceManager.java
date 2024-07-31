@@ -14,8 +14,10 @@ import com.github.topi314.lavasrc.mirror.MirroringAudioTrackResolver;
 import com.github.topi314.lavasrc.spotify.external.SearchItemRequestSpecial;
 import com.github.topi314.lavasrc.spotify.external.SearchResultSpecial;
 import com.github.topi314.lavasrc.spotify.external.TrackWrapper;
+import com.google.gson.Gson;
 import com.neovisionaries.i18n.CountryCode;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayerManager;
+import com.sedmelluq.discord.lavaplayer.tools.DataFormatTools;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpClientTools;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpConfigurable;
 import com.sedmelluq.discord.lavaplayer.tools.io.HttpInterfaceManager;
@@ -36,6 +38,7 @@ import se.michaelthelin.spotify.exceptions.SpotifyWebApiException;
 import se.michaelthelin.spotify.model_objects.specification.*;
 
 import java.io.DataInput;
+import java.io.DataOutput;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -75,6 +78,8 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 
 	private String spToken;
 	private Instant spTokenExpire;
+
+	private final Gson gson = new Gson();
 
 	public SpotifySourceManager(String[] providers, String clientId, String clientSecret, String countryCode, AudioPlayerManager audioPlayerManager) {
 		this(clientId, clientSecret, null, countryCode, unused -> audioPlayerManager, new DefaultMirroringAudioTrackResolver(providers));
@@ -177,9 +182,24 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 	}
 
 	@Override
+	public void encodeTrack(AudioTrack track, DataOutput output) throws IOException {
+		super.encodeTrack(track, output);
+
+		if (track instanceof SpotifyAudioTrack) {
+			log.info("[DEBUG] Encoded track.");
+			DataFormatTools.writeNullableText(output, gson.toJson(((SpotifyAudioTrack) track).getMetadata()));
+		}
+	}
+
+	@Override
 	public AudioTrack decodeTrack(AudioTrackInfo trackInfo, DataInput input) throws IOException {
 		var extendedAudioTrackInfo = super.decodeTrack(input);
+		var encodedMetadata =  DataFormatTools.readNullableText(input);
+
+		log.info("[DEBUG] Decoded track, {} chars for metadata", encodedMetadata.length());
+
 		return new SpotifyAudioTrack(trackInfo,
+			new Track.JsonUtil().createModelObject(encodedMetadata),
 			extendedAudioTrackInfo.albumName,
 			extendedAudioTrackInfo.albumUrl,
 			extendedAudioTrackInfo.artistUrl,
@@ -695,6 +715,7 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 				track.getAlbum().getImages()[0].getUrl(),
 				track.getExternalIds().getExternalIds().get("isrc")
 			),
+			trackWrapper.getTrack(),
 			track.getAlbum().getName(),
 			track.getAlbum().getExternalUrls().get("spotify"),
 			track.getArtists()[0].getExternalUrls().get("spotify"),
