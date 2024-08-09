@@ -10,6 +10,7 @@ lavalinkPlugin {
     configurePublishing = false
 }
 
+runLavaLink.enabled = false
 
 dependencies {
     implementation project(":main")
