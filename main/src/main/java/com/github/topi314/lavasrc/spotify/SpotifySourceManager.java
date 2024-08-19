@@ -307,7 +307,7 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 		// Custom handle for Albums
 		var requestBuilder = new SearchItemRequestSpecial.Builder(api.getAccessToken())
 			.setDefaults(api.getHttpManager(), api.getScheme(), api.getHost(), api.getPort())
-			.q(URLEncoder.encode(query, StandardCharsets.UTF_8))
+			.q(query)
 			.type(types.stream().map(AudioSearchResult.Type::getName).collect(Collectors.joining(",")))
 			.build();
 
@@ -370,7 +370,7 @@ public class SpotifySourceManager extends MirroringAudioSourceManager implements
 	public AudioItem getSearch(String query, boolean preview) throws IOException, ParseException {
 		var tracksRequest = spotifyApiAccessor
 			.getSpotifyApi()
-			.searchTracks(URLEncoder.encode(query, StandardCharsets.UTF_8))
+			.searchTracks(query)
 			.build();
 
 		Paging<Track> tracksResult = null;
